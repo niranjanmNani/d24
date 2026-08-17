@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: delivery24-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        sync: false        # you paste this in Render dashboard
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true  # Render auto-generates a random secret
+      - key: OTP_DEMO_MODE
+        value: true
+      - key: SUPERADMIN_PHONE
+        value: "9949808388"
+      - key: CORS_ORIGIN
+        value: "*"
