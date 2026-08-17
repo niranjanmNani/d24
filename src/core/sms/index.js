@@ -5,7 +5,7 @@ const DEMO_MODE = process.env.OTP_DEMO_MODE === 'true';
 const sms = {
   async sendOTP(phone, otp) {
     if (DEMO_MODE) {
-      console.log(\`[SMS DEMO] +91\${phone} → OTP: \${otp}\`);
+      console.log(`[SMS DEMO] +91${phone} → OTP: ${otp}`);
       return { sent: true, demo: true };
     }
 
