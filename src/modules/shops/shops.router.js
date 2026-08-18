@@ -10,6 +10,7 @@ var storage = require('../../core/storage');
 var shopsService = require('./shops.service');
 var db = require('../../core/db/client');
 
+// GET /api/shops — list active nearby shops
 router.get('/', function(req, res) {
   var q = req.query;
   shopsService.listNearby(parseFloat(q.lat), parseFloat(q.lng), parseFloat(q.radius)||10, q.category)
@@ -17,12 +18,21 @@ router.get('/', function(req, res) {
     .catch(function(e) { err(res, e.message); });
 });
 
-router.get('/:shopId', function(req, res) {
-  shopsService.getById(req.params.shopId)
-    .then(function(shop) { if (!shop) return err(res,'Shop not found',404); ok(res, shop); })
+// GET /api/shops/mine — merchant gets their own shop (active or pending)
+router.get('/mine', auth.authenticate, function(req, res) {
+  db.one('SELECT * FROM shops WHERE merchant_id=$1 ORDER BY created_at DESC LIMIT 1', [req.user.id])
+    .then(function(shop) { ok(res, shop); })
     .catch(function(e) { err(res, e.message); });
 });
 
+// GET /api/shops/:shopId
+router.get('/:shopId', function(req, res) {
+  shopsService.getById(req.params.shopId)
+    .then(function(shop) { if (!shop) return err(res, 'Shop not found', 404); ok(res, shop); })
+    .catch(function(e) { err(res, e.message); });
+});
+
+// POST /api/shops — register shop (any authenticated user)
 router.post('/', auth.authenticate, validate(Joi.object({
   name: Joi.string().min(2).max(100).required(),
   description: Joi.string().max(500),
@@ -41,17 +51,29 @@ router.post('/', auth.authenticate, validate(Joi.object({
   cashback_value: Joi.number().min(0).default(2),
   cashback_max: Joi.number().min(0).default(50)
 })), function(req, res) {
-  shopsService.register(req.user.id, req.body)
+  // Check if merchant already has a shop
+  db.one('SELECT id FROM shops WHERE merchant_id=$1', [req.user.id])
+    .then(function(existing) {
+      if (existing) throw new Error('You already have a registered shop');
+      return shopsService.register(req.user.id, req.body);
+    })
+    .then(function(shop) {
+      // Auto-upgrade user role to merchant
+      return db.query('UPDATE users SET role=$1 WHERE id=$2 AND role=$3', ['merchant', req.user.id, 'customer'])
+        .then(function() { return shop; });
+    })
     .then(function(shop) { ok(res, shop, 201); })
     .catch(function(e) { err(res, e.message); });
 });
 
+// PATCH /api/shops/:shopId
 router.patch('/:shopId', auth.authenticate, auth.requireShopAccess, function(req, res) {
   shopsService.update(req.params.shopId, req.body)
     .then(function(shop) { ok(res, shop); })
     .catch(function(e) { err(res, e.message); });
 });
 
+// POST /api/shops/:shopId/order-summary
 router.post('/:shopId/order-summary', auth.authenticate, function(req, res) {
   var body = req.body;
   db.one('SELECT balance FROM wallets WHERE user_id=$1', [req.user.id])
@@ -62,24 +84,26 @@ router.post('/:shopId/order-summary', auth.authenticate, function(req, res) {
     .catch(function(e) { err(res, e.message, 400); });
 });
 
+// POST /api/shops/:shopId/block-customer
 router.post('/:shopId/block-customer', auth.authenticate, auth.requireShopAccess, function(req, res) {
   shopsService.blockCustomer(req.params.shopId, req.body.customer_id, req.body.reason)
     .then(function(r) { ok(res, r); }).catch(function(e) { err(res, e.message); });
 });
 
+// DELETE /api/shops/:shopId/block-customer/:customerId
 router.delete('/:shopId/block-customer/:customerId', auth.authenticate, auth.requireShopAccess, function(req, res) {
   shopsService.unblockCustomer(req.params.shopId, req.params.customerId)
     .then(function() { ok(res, { unblocked: true }); }).catch(function(e) { err(res, e.message); });
 });
 
+// POST /api/shops/:shopId/agents
 router.post('/:shopId/agents', auth.authenticate, auth.requireShopAccess, function(req, res) {
-  shopsService.addAgent(req.params.shopId, req.body.user_id)
-    .then(function(a) { ok(res, a); }).catch(function(e) { err(res, e.message); });
+  shopsService.addAgent(req.params.shopId, req.body.user_id).then(function(a) { ok(res, a); }).catch(function(e) { err(res, e.message); });
 });
 
+// GET /api/shops/:shopId/agents
 router.get('/:shopId/agents', auth.authenticate, auth.requireShopAccess, function(req, res) {
-  shopsService.getAgents(req.params.shopId)
-    .then(function(agents) { ok(res, agents); }).catch(function(e) { err(res, e.message); });
+  shopsService.getAgents(req.params.shopId).then(function(agents) { ok(res, agents); }).catch(function(e) { err(res, e.message); });
 });
 
 module.exports = router;
