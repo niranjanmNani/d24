@@ -21,11 +21,22 @@ const storage = {
     return storage.compressImage(buffer, options.maxWidth, options.quality);
   },
   async uploadProductImages(files) {
-    if (files.length > MAX_IMAGES) throw new Error('Maximum ' + MAX_IMAGES + ' images allowed per product');
-    return Promise.all(files.map(function(f) { return storage.uploadImage(f.buffer, 'products', { maxWidth: 1200, quality: 85 }); }));
+    if (files.length > MAX_IMAGES) {
+      throw new Error('Maximum ' + MAX_IMAGES + ' images allowed per product');
+    }
+    return Promise.all(files.map(function(f) {
+      return storage.uploadImage(f.buffer, 'products', { maxWidth: 1200, quality: 85 });
+    }));
   },
-  async uploadAvatar(buffer) { return storage.uploadImage(buffer, 'avatars', { maxWidth: 400, quality: 90 }); },
-  async uploadShopImage(buffer, type) { return storage.uploadImage(buffer, 'shops', { maxWidth: 1000, quality: 85 }); },
-  async deleteImage(url) { return true; }
+  async uploadAvatar(buffer) {
+    return storage.uploadImage(buffer, 'avatars', { maxWidth: 400, quality: 90 });
+  },
+  async uploadShopImage(buffer, type) {
+    return storage.uploadImage(buffer, 'shops', { maxWidth: 1000, quality: 85 });
+  },
+  async deleteImage(url) {
+    return true;
+  }
 };
+
 module.exports = storage;
