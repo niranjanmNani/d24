@@ -1,49 +1,32 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.SUPABASE_URL,
+  connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000
 });
 
-pool.on('error', (err) => {
-  console.error('Unexpected DB client error', err);
-});
+pool.on('error', function(err) { console.error('DB pool error', err); });
 
 const db = {
-  query: async (text, params) => {
-    const start = Date.now();
-    const res = await pool.query(text, params);
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[DB] ${Date.now() - start}ms — ${text.slice(0, 80)}`);
-    }
-    return res;
+  query: function(text, params) { return pool.query(text, params); },
+  one: function(text, params) {
+    return pool.query(text, params).then(function(r) { return r.rows[0] || null; });
   },
-  one: async (text, params) => {
-    const res = await pool.query(text, params);
-    return res.rows[0] || null;
+  many: function(text, params) {
+    return pool.query(text, params).then(function(r) { return r.rows; });
   },
-  many: async (text, params) => {
-    const res = await pool.query(text, params);
-    return res.rows;
+  transaction: function(fn) {
+    return pool.connect().then(function(client) {
+      return client.query('BEGIN')
+        .then(function() { return fn(client); })
+        .then(function(result) { return client.query('COMMIT').then(function() { return result; }); })
+        .catch(function(err) { return client.query('ROLLBACK').then(function() { throw err; }); })
+        .finally(function() { client.release(); });
+    });
   },
-  transaction: async (fn) => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await fn(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  },
-  pool
+  pool: pool
 };
-
 module.exports = db;

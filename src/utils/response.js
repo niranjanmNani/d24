@@ -1,5 +1,4 @@
-const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
-const err = (res, message, status = 400) => res.status(status).json({ success: false, error: message });
-const paginate = (res, data, meta) => res.json({ success: true, data, meta });
-
-module.exports = { ok, err, paginate };
+function ok(res, data, status) { res.status(status || 200).json({ success: true, data: data }); }
+function err(res, message, status) { res.status(status || 400).json({ success: false, error: message }); }
+function paginate(res, data, meta) { res.json({ success: true, data: data, meta: meta }); }
+module.exports = { ok: ok, err: err, paginate: paginate };

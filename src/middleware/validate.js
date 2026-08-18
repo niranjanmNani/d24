@@ -1,17 +1,13 @@
-const Joi = require('joi');
-
-function validate(schema, target = 'body') {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req[target], { abortEarly: false, stripUnknown: true });
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: error.details.map(d => d.message)
-      });
+var Joi = require('joi');
+function validate(schema, target) {
+  target = target || 'body';
+  return function(req, res, next) {
+    var result = schema.validate(req[target], { abortEarly: false, stripUnknown: true });
+    if (result.error) {
+      return res.status(400).json({ error: 'Validation failed', details: result.error.details.map(function(d){ return d.message; }) });
     }
-    req[target] = value;
+    req[target] = result.value;
     next();
   };
 }
-
-module.exports = { validate };
+module.exports = { validate: validate };

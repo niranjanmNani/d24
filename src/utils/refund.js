@@ -1,23 +1,19 @@
 function t7date() {
-  const d = new Date();
+  var d = new Date();
   d.setDate(d.getDate() + 7);
   return d.toISOString().split('T')[0];
 }
-
-// Compute how a refund splits across wallet vs source
 function refundSplit(order, refundAmt) {
-  const total = Number(order.total);
-  const walletUsed = Number(order.wallet_used || 0);
-  const sourceAmt = total - walletUsed;
-  const walFrac = total > 0 ? walletUsed / total : 0;
-  const walletRefund = Math.min(walletUsed, Math.round(refundAmt * walFrac * 100) / 100);
-  const sourceRefund = Math.max(0, Math.round((refundAmt - walletRefund) * 100) / 100);
+  var total = Number(order.total);
+  var walletUsed = Number(order.wallet_used || 0);
+  var walFrac = total > 0 ? walletUsed / total : 0;
+  var walletRefund = Math.min(walletUsed, Math.round(refundAmt * walFrac * 100) / 100);
+  var sourceRefund = Math.max(0, Math.round((refundAmt - walletRefund) * 100) / 100);
   return {
-    walletRefund,
-    sourceRefund,
+    walletRefund: walletRefund,
+    sourceRefund: sourceRefund,
     schedDate: sourceRefund > 0 ? t7date() : null,
-    paidByWalletOnly: sourceAmt <= 0
+    paidByWalletOnly: (total - walletUsed) <= 0
   };
 }
-
-module.exports = { t7date, refundSplit };
+module.exports = { t7date: t7date, refundSplit: refundSplit };

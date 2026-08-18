@@ -1,49 +1,31 @@
-const express = require('express');
-const router = express.Router({ mergeParams: true }); // inherit :shopId
-const Joi = require('joi');
-const { validate } = require('../../middleware/validate');
-const { authenticate, requireShopAccess } = require('../../middleware/auth');
-const { ok, err } = require('../../utils/response');
-const upload = require('../../middleware/upload');
-const storage = require('../../core/storage');
-const productsService = require('./products.service');
+var express = require('express');
+var router = express.Router({ mergeParams: true });
+var Joi = require('joi');
+var validate = require('../../middleware/validate').validate;
+var auth = require('../../middleware/auth');
+var ok = require('../../utils/response').ok;
+var err = require('../../utils/response').err;
+var upload = require('../../middleware/upload');
+var storage = require('../../core/storage');
+var productsService = require('./products.service');
 
-// GET /api/shops/:shopId/products
-router.get('/', async (req, res) => {
-  try {
-    const products = await productsService.list(req.params.shopId, req.query);
-    ok(res, products);
-  } catch (e) { err(res, e.message); }
+router.get('/', function(req, res) {
+  productsService.list(req.params.shopId, req.query)
+    .then(function(p){ ok(res,p); }).catch(function(e){ err(res,e.message); });
 });
-
-// GET /api/shops/:shopId/products/low-stock
-router.get('/low-stock', authenticate, requireShopAccess, async (req, res) => {
-  try {
-    const products = await productsService.getLowStock(req.params.shopId);
-    ok(res, products);
-  } catch (e) { err(res, e.message); }
+router.get('/low-stock', auth.authenticate, auth.requireShopAccess, function(req,res) {
+  productsService.getLowStock(req.params.shopId)
+    .then(function(p){ ok(res,p); }).catch(function(e){ err(res,e.message); });
 });
-
-// GET /api/shops/:shopId/products/barcode/:barcode
-router.get('/barcode/:barcode', authenticate, requireShopAccess, async (req, res) => {
-  try {
-    const product = await productsService.lookupBarcode(req.params.barcode, req.params.shopId);
-    if (!product) return err(res, 'Product not found', 404);
-    ok(res, product);
-  } catch (e) { err(res, e.message); }
+router.get('/barcode/:barcode', auth.authenticate, auth.requireShopAccess, function(req,res) {
+  productsService.lookupBarcode(req.params.barcode, req.params.shopId)
+    .then(function(p){ if(!p) return err(res,'Not found',404); ok(res,p); }).catch(function(e){ err(res,e.message); });
 });
-
-// GET /api/shops/:shopId/products/:id
-router.get('/:id', async (req, res) => {
-  try {
-    const product = await productsService.getById(req.params.id);
-    if (!product) return err(res, 'Product not found', 404);
-    ok(res, product);
-  } catch (e) { err(res, e.message); }
+router.get('/:id', function(req,res) {
+  productsService.getById(req.params.id)
+    .then(function(p){ if(!p) return err(res,'Not found',404); ok(res,p); }).catch(function(e){ err(res,e.message); });
 });
-
-// POST /api/shops/:shopId/products
-router.post('/', authenticate, requireShopAccess, validate(Joi.object({
+router.post('/', auth.authenticate, auth.requireShopAccess, validate(Joi.object({
   name: Joi.string().min(2).max(200).required(),
   description: Joi.string().max(500),
   brand: Joi.string().max(100),
@@ -56,45 +38,22 @@ router.post('/', authenticate, requireShopAccess, validate(Joi.object({
   low_stock_at: Joi.number().min(0).default(5),
   unit: Joi.string().default('piece'),
   sort_order: Joi.number().default(0)
-})), async (req, res) => {
-  try {
-    const product = await productsService.create(req.params.shopId, req.body);
-    ok(res, product, 201);
-  } catch (e) { err(res, e.message); }
+})), function(req,res) {
+  productsService.create(req.params.shopId, req.body)
+    .then(function(p){ ok(res,p,201); }).catch(function(e){ err(res,e.message); });
 });
-
-// PATCH /api/shops/:shopId/products/:id
-router.patch('/:id', authenticate, requireShopAccess, async (req, res) => {
-  try {
-    const product = await productsService.update(req.params.id, req.body);
-    ok(res, product);
-  } catch (e) { err(res, e.message); }
+router.patch('/:id', auth.authenticate, auth.requireShopAccess, function(req,res) {
+  productsService.update(req.params.id, req.body)
+    .then(function(p){ ok(res,p); }).catch(function(e){ err(res,e.message); });
 });
-
-// POST /api/shops/:shopId/products/:id/images (up to 5)
-router.post('/:id/images', authenticate, requireShopAccess, upload.array('images', 5), async (req, res) => {
-  try {
-    if (!req.files?.length) return err(res, 'No images uploaded');
-    const urls = await storage.uploadProductImages(req.files);
-    const images = await productsService.addImages(req.params.id, urls);
-    ok(res, images);
-  } catch (e) { err(res, e.message); }
+router.post('/:id/images', auth.authenticate, auth.requireShopAccess, upload.array('images',5), function(req,res) {
+  if (!req.files || !req.files.length) return err(res,'No images uploaded');
+  storage.uploadProductImages(req.files)
+    .then(function(urls){ return productsService.addImages(req.params.id, urls); })
+    .then(function(imgs){ ok(res,imgs); }).catch(function(e){ err(res,e.message); });
 });
-
-// DELETE /api/shops/:shopId/products/:id/images/:imageId
-router.delete('/:id/images/:imageId', authenticate, requireShopAccess, async (req, res) => {
-  try {
-    await productsService.removeImage(req.params.imageId, req.params.id);
-    ok(res, { deleted: true });
-  } catch (e) { err(res, e.message); }
+router.delete('/:id/images/:imageId', auth.authenticate, auth.requireShopAccess, function(req,res) {
+  productsService.removeImage(req.params.imageId, req.params.id)
+    .then(function(){ ok(res,{deleted:true}); }).catch(function(e){ err(res,e.message); });
 });
-
-// PATCH /api/shops/:shopId/products/:id/image-order
-router.patch('/:id/image-order', authenticate, requireShopAccess, async (req, res) => {
-  try {
-    await productsService.reorderImages(req.params.id, req.body.ordered_ids);
-    ok(res, { reordered: true });
-  } catch (e) { err(res, e.message); }
-});
-
 module.exports = router;
