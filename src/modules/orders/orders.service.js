@@ -115,9 +115,10 @@ var ordersService = {
         if (extra.otp !== order.delivery_otp) throw new Error('Wrong delivery OTP');
       }
       var timeMap = { confirmed:'confirmed_at', packed:'packed_at', assigned:'assigned_at', picked_up:'picked_at', delivered:'delivered_at' };
-      var agentClause = extra.agentId ? (',agent_id=' + "'" + extra.agentId + "'") : '';
-      var q = 'UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now()' + agentClause + ' WHERE id=$1 RETURNING *';
-      return db.one(q, [orderId, newStatus]);
+      if(extra.agentId){
+        return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now(),agent_id=$3 WHERE id=$1 RETURNING *', [orderId, newStatus, extra.agentId]);
+      }
+      return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now() WHERE id=$1 RETURNING *', [orderId, newStatus]);
     });
   },
 
