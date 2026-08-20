@@ -3,12 +3,15 @@ var geo = require('../../utils/geo');
 var refundUtil = require('../../utils/refund');
 
 var ordersService = {
+
   place: function(customerId, shopId, data) {
     return db.transaction(function(client) {
       var shop, lineItems = [], subtotal = 0, gst_total = 0;
       return client.query('SELECT * FROM shops WHERE id=$1 AND is_active=true', [shopId]).then(function(r) {
         shop = r.rows[0];
         if (!shop) throw new Error('Shop not found or inactive');
+        if (shop.blocked_at) throw new Error('Shop is currently unavailable');
+        if (shop.is_open === false) throw new Error('This shop is currently closed');
         return client.query('SELECT id FROM shop_customer_blocks WHERE shop_id=$1 AND customer_id=$2', [shopId, customerId]);
       }).then(function(r) {
         if (r.rows[0]) throw new Error('You are restricted from ordering at this store');
@@ -115,7 +118,7 @@ var ordersService = {
         if (extra.otp !== order.delivery_otp) throw new Error('Wrong delivery OTP');
       }
       var timeMap = { confirmed:'confirmed_at', packed:'packed_at', assigned:'assigned_at', picked_up:'picked_at', delivered:'delivered_at' };
-      if(extra.agentId){
+      if (extra.agentId) {
         return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now(),agent_id=$3 WHERE id=$1 RETURNING *', [orderId, newStatus, extra.agentId]);
       }
       return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now() WHERE id=$1 RETURNING *', [orderId, newStatus]);
@@ -127,29 +130,88 @@ var ordersService = {
       if (!order) throw new Error('Order not found');
       if (order.status === 'delivered' || order.status === 'cancelled') throw new Error('Cannot cancel');
       return db.transaction(function(client) {
-        return client.query('UPDATE orders SET status=\'cancelled\',cancelled_at=now(),refund_status=$1,refunded_amount=$2 WHERE id=$3',
-          [order.payment_status==='paid'?'full':'none', order.payment_status==='paid'?order.total:0, orderId])
-          .then(function() {
-            return order.items.reduce(function(chain, item) {
-              return chain.then(function() { return client.query('UPDATE products SET stock=stock+$1 WHERE id=$2', [item.qty, item.product_id]); });
-            }, Promise.resolve());
+        return client.query(
+          'UPDATE orders SET status=$1,cancelled_at=now(),refund_status=$2,refunded_amount=$3 WHERE id=$4',
+          ['cancelled', order.payment_status==='paid'?'full':'none', order.payment_status==='paid'?order.total:0, orderId]
+        ).then(function() {
+          return order.items.reduce(function(chain, item) {
+            return chain.then(function() { return client.query('UPDATE products SET stock=stock+$1 WHERE id=$2', [item.qty, item.product_id]); });
+          }, Promise.resolve());
+        }).then(function() {
+          if (order.payment_status !== 'paid') return;
+          var split = refundUtil.refundSplit(order, Number(order.total));
+          var p = split.walletRefund > 0
+            ? client.query('UPDATE wallets SET balance=balance+$1 WHERE user_id=$2', [split.walletRefund, order.customer_id])
+                .then(function() { return client.query('INSERT INTO wallet_transactions(user_id,amount,type,description,order_id) VALUES($1,$2,$3,$4,$5)', [order.customer_id, split.walletRefund, 'refund', 'Order cancelled - wallet refund', orderId]); })
+            : Promise.resolve();
+          return p.then(function() {
+            if (split.sourceRefund <= 0) return;
+            return client.query('INSERT INTO refunds(order_id,customer_id,amount,type,reason,destination,status,scheduled_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+              [orderId, order.customer_id, split.sourceRefund, 'full', 'Order cancelled', 'source', 'pending', split.schedDate]);
           }).then(function() {
-            if (order.payment_status !== 'paid') return;
-            var split = refundUtil.refundSplit(order, Number(order.total));
+            return client.query('UPDATE scratch_cards SET voided=true WHERE order_id=$1 AND collected=false', [orderId]);
+          });
+        }).then(function() { return { cancelled: true }; });
+      });
+    });
+  },
+
+  issueRefund: function(orderId, adminId, data) {
+    var amount = Number(data.amount);
+    var reason = data.reason;
+    return ordersService.getOrder(orderId).then(function(order) {
+      if (!order) throw new Error('Order not found');
+      var maxRefund = Number(order.total) - Number(order.refunded_amount || 0);
+      if (amount > maxRefund) throw new Error('Max refundable: ' + maxRefund);
+      return db.transaction(function(client) {
+        var newRefunded = Number(order.refunded_amount || 0) + amount;
+        var newStatus = newRefunded >= Number(order.total) ? 'full' : 'partial';
+        return client.query('UPDATE orders SET refunded_amount=$1,refund_status=$2 WHERE id=$3', [newRefunded, newStatus, orderId])
+          .then(function() {
+            var split = refundUtil.refundSplit(order, amount);
             var p = split.walletRefund > 0
               ? client.query('UPDATE wallets SET balance=balance+$1 WHERE user_id=$2', [split.walletRefund, order.customer_id])
-                  .then(function() { return client.query('INSERT INTO wallet_transactions(user_id,amount,type,description,order_id) VALUES($1,$2,$3,$4,$5)', [order.customer_id, split.walletRefund, 'refund', 'Order cancelled - wallet refund', orderId]); })
+                  .then(function() { return client.query('INSERT INTO wallet_transactions(user_id,amount,type,description,order_id) VALUES($1,$2,$3,$4,$5)', [order.customer_id, split.walletRefund, 'refund', reason, orderId]); })
+                  .then(function() { return client.query('INSERT INTO refunds(order_id,customer_id,amount,type,reason,destination,status) VALUES($1,$2,$3,$4,$5,$6,$7)', [orderId, order.customer_id, split.walletRefund, data.type||'partial', reason, 'wallet', 'processed']); })
               : Promise.resolve();
             return p.then(function() {
               if (split.sourceRefund <= 0) return;
               return client.query('INSERT INTO refunds(order_id,customer_id,amount,type,reason,destination,status,scheduled_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-                [orderId, order.customer_id, split.sourceRefund, 'full', 'Order cancelled', 'source', 'pending', split.schedDate]);
-            }).then(function() {
-              return client.query('UPDATE scratch_cards SET voided=true WHERE order_id=$1 AND collected=false', [orderId]);
+                [orderId, order.customer_id, split.sourceRefund, data.type||'partial', reason, 'source', 'pending', split.schedDate]);
             });
-          }).then(function() { return { cancelled: true }; });
+          })
+          .then(function() { return { refunded: true, amount: amount }; });
       });
     });
+  },
+
+  markPaid: function(orderId, method) {
+    method = method || 'cod';
+    return db.one('SELECT * FROM orders WHERE id=$1', [orderId]).then(function(order) {
+      if (!order) throw new Error('Order not found');
+      if (order.status === 'cancelled') throw new Error('Cannot mark a cancelled order as paid');
+      if (order.payment_status === 'paid') throw new Error('Order is already marked as paid');
+      return db.query('UPDATE orders SET payment_status=$1,payment_method=$2 WHERE id=$3', ['paid', method, orderId])
+        .then(function() {
+          return db.one('SELECT id FROM scratch_cards WHERE order_id=$1', [orderId])
+            .then(function(existing) {
+              if (existing) return null;
+              return db.one('SELECT * FROM shops WHERE id=$1', [order.shop_id]).then(function(shop) {
+                if (!shop || shop.cashback_value <= 0) return null;
+                var cashback = shop.cashback_type === 'percent'
+                  ? Math.min(Number(order.subtotal) * shop.cashback_value / 100, shop.cashback_max)
+                  : Math.min(shop.cashback_value, shop.cashback_max);
+                cashback = Math.round(cashback * 100) / 100;
+                if (cashback <= 0) return null;
+                return db.query('INSERT INTO scratch_cards(user_id,shop_id,order_id,amount) VALUES($1,$2,$3,$4)',
+                  [order.customer_id, order.shop_id, orderId, cashback]);
+              });
+            });
+        })
+        .then(function() { return db.one('SELECT * FROM orders WHERE id=$1', [orderId]); });
+    });
   }
+
 };
+
 module.exports = ordersService;
