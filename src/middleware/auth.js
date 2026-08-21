@@ -4,8 +4,8 @@ var SUPERADMIN_PHONE = process.env.SUPERADMIN_PHONE || '9949808388';
 
 function authenticate(req, res, next) {
   var header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
-  var token = header.split(' ')[1];
+  var token = (header && header.startsWith('Bearer ')) ? header.split(' ')[1] : req.query.token;
+  if (!token) return res.status(401).json({ error: 'No token provided' });
   var payload;
   try { payload = jwt.verify(token, process.env.JWT_SECRET); }
   catch(e) { return res.status(401).json({ error: 'Invalid or expired token' }); }
