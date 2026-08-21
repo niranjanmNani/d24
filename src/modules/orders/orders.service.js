@@ -92,7 +92,7 @@ var ordersService = {
   listForCustomer: function(customerId, opts) {
     opts = opts || {};
     var page = opts.page || 1, limit = opts.limit || 20;
-    return db.many('SELECT o.*, s.name as shop_name, s.logo_url as shop_logo, a.name as agent_name, a.phone as agent_phone FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users a ON a.id=o.agent_id WHERE o.customer_id=$1 ORDER BY o.placed_at DESC LIMIT $2 OFFSET $3',
+    return db.many('SELECT o.*, s.name as shop_name, s.logo_url as shop_logo, s.lat as shop_lat, s.lng as shop_lng, a.name as agent_name, a.phone as agent_phone, a.id as agent_id FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users a ON a.id=o.agent_id WHERE o.customer_id=$1 ORDER BY o.placed_at DESC LIMIT $2 OFFSET $3',
       [customerId, limit, (page-1)*limit]);
   },
 
