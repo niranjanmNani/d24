@@ -79,7 +79,7 @@ var ordersService = {
   },
 
   getOrder: function(id) {
-    return db.one('SELECT o.*, s.name as shop_name, u.name as customer_name, u.phone as customer_phone FROM orders o JOIN shops s ON s.id=o.shop_id JOIN users u ON u.id=o.customer_id WHERE o.id=$1', [id])
+    return db.one('SELECT o.*, s.name as shop_name, u.name as customer_name, u.phone as customer_phone, a.name as agent_name, a.phone as agent_phone FROM orders o JOIN shops s ON s.id=o.shop_id JOIN users u ON u.id=o.customer_id LEFT JOIN users a ON a.id=o.agent_id WHERE o.id=$1', [id])
       .then(function(order) {
         if (!order) return null;
         return db.many('SELECT * FROM order_items WHERE order_id=$1', [id]).then(function(items) {
@@ -92,14 +92,14 @@ var ordersService = {
   listForCustomer: function(customerId, opts) {
     opts = opts || {};
     var page = opts.page || 1, limit = opts.limit || 20;
-    return db.many('SELECT o.*, s.name as shop_name, s.logo_url as shop_logo FROM orders o JOIN shops s ON s.id=o.shop_id WHERE o.customer_id=$1 ORDER BY o.placed_at DESC LIMIT $2 OFFSET $3',
+    return db.many('SELECT o.*, s.name as shop_name, s.logo_url as shop_logo, a.name as agent_name, a.phone as agent_phone FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users a ON a.id=o.agent_id WHERE o.customer_id=$1 ORDER BY o.placed_at DESC LIMIT $2 OFFSET $3',
       [customerId, limit, (page-1)*limit]);
   },
 
   listForShop: function(shopId, opts) {
     opts = opts || {};
     var page = opts.page || 1, limit = opts.limit || 50;
-    var q = 'SELECT o.*, u.name as customer_name, u.phone as customer_phone FROM orders o JOIN users u ON u.id=o.customer_id WHERE o.shop_id=$1';
+    var q = 'SELECT o.*, u.name as customer_name, u.phone as customer_phone, a.name as agent_name, a.phone as agent_phone FROM orders o JOIN users u ON u.id=o.customer_id LEFT JOIN users a ON a.id=o.agent_id WHERE o.shop_id=$1';
     var params = [shopId];
     if (opts.status) { params.push(opts.status); q += ' AND o.status=$' + params.length; }
     q += ' ORDER BY o.placed_at DESC LIMIT $' + (params.length+1) + ' OFFSET $' + (params.length+2);
@@ -118,10 +118,21 @@ var ordersService = {
         if (extra.otp !== order.delivery_otp) throw new Error('Wrong delivery OTP');
       }
       var timeMap = { confirmed:'confirmed_at', packed:'packed_at', assigned:'assigned_at', picked_up:'picked_at', delivered:'delivered_at' };
-      if (extra.agentId) {
-        return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now(),agent_id=$3 WHERE id=$1 RETURNING *', [orderId, newStatus, extra.agentId]);
+      // Auto-assign available agent when moving to assigned
+      var agentPromise = Promise.resolve(extra.agentId || null);
+      if (newStatus === 'assigned' && !extra.agentId) {
+        agentPromise = db.one(
+          'SELECT user_id FROM shop_agents WHERE shop_id=$1 AND is_active=true AND is_on_duty=true ORDER BY RANDOM() LIMIT 1',
+          [order.shop_id]
+        ).then(function(a) { return a ? a.user_id : null; })
+        .catch(function() { return null; });
       }
-      return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now() WHERE id=$1 RETURNING *', [orderId, newStatus]);
+      return agentPromise.then(function(agentId) {
+        if (agentId) {
+          return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now(),agent_id=$3 WHERE id=$1 RETURNING *', [orderId, newStatus, agentId]);
+        }
+        return db.one('UPDATE orders SET status=$2,' + timeMap[newStatus] + '=now() WHERE id=$1 RETURNING *', [orderId, newStatus]);
+      });
     });
   },
 
