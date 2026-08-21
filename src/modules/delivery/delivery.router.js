@@ -5,6 +5,7 @@ var ok = require('../../utils/response').ok;
 var err = require('../../utils/response').err;
 var db = require('../../core/db/client');
 var refundUtil = require('../../utils/refund');
+var sse = require('../../core/events');
 
 router.post('/returns', auth.authenticate, function(req,res) {
   var d = req.body;
