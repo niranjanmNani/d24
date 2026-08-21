@@ -36,6 +36,7 @@ app.use('/api/wallet',                       require('./modules/wallet/wallet.ro
 app.use('/api/delivery',                     require('./modules/delivery/delivery.router'));
 app.use('/api/addresses',                    require('./modules/delivery/addresses.router'));
 app.use('/api/admin',                        require('./modules/admin/admin.router'));
+app.use('/api/events',                       require('./modules/events/events.router'));
 
 app.use(function(req, res) { res.status(404).json({ error: 'Route not found' }); });
 app.use(function(err, req, res, next) { console.error(err); res.status(500).json({ error: err.message }); });
